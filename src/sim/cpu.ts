@@ -21,10 +21,14 @@ export function step(state: CPUState, program: Program): StepResult {
 
   const writeReg = (i: number, v: number) => {
     if (i === 0) return;
-    const before = r[i];
-    r[i] = v | 0;
-    effects.push({ kind: "reg", reg: i, before, after: r[i] });
+    const before = r[i] | 0;
+    const after = v | 0;
+    if (before !== after) {
+      r[i] = after;
+      effects.push({ kind: "reg", reg: i, before, after });
+    }
   };
+  
 
   if (inst.op === "addi") {
     writeReg(inst.rd, r[inst.rs1] + inst.imm);
