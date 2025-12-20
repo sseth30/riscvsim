@@ -1,4 +1,4 @@
-import { CPUState, Program, StepResult, Effect } from "./types";
+import type { CPUState, Program, StepResult, Effect } from "./types";
 import { loadWord, storeWord } from "./memory";
 
 export function createState(): CPUState {

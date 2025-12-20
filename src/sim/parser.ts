@@ -1,4 +1,4 @@
-import { Program, Inst } from "./types";
+import type { Program, Inst } from "./types";
 
 const reg = (s: string) =>
   s.startsWith("x") ? Number(s.slice(1)) : (() => { throw new Error("Bad reg"); })();
