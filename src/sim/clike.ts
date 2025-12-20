@@ -1,4 +1,4 @@
-import type { Program, Inst } from "./types";
+import type { Program } from "./types";
 
 function hex32(n: number) {
   return "0x" + (n >>> 0).toString(16).padStart(8, "0");
@@ -11,8 +11,22 @@ function invSymbols(program: Program): Map<number, string> {
   return m;
 }
 
+function labelsByPc(program: Program): Map<number, string[]> {
+  const m = new Map<number, string[]>();
+  for (const [name, pc] of Object.entries(program.labels ?? {})) {
+    if (!m.has(pc)) m.set(pc, []);
+    m.get(pc)!.push(name);
+  }
+  return m;
+}
+
 function fmtAddr(inv: Map<number, string>, addr: number) {
   return inv.get(addr) ?? hex32(addr);
+}
+
+function fmtLabel(labelMap: Map<number, string[]>, pc: number) {
+  const names = labelMap.get(pc);
+  return names && names.length ? names[0] : hex32(pc);
 }
 
 const abiNames = [
@@ -28,6 +42,7 @@ function r(i: number) {
 
 export function cLikeExplain(program: Program): string {
   const inv = invSymbols(program);
+  const labelMap = labelsByPc(program);
 
   // Track simple constants: reg -> constant value when known
   const regConst = new Map<number, number>();
@@ -42,6 +57,11 @@ export function cLikeExplain(program: Program): string {
 
   for (let i = 0; i < insts.length; i++) {
     const ins = insts[i];
+    const pc = i * 4;
+    const labelsHere = labelMap.get(pc);
+    if (labelsHere) {
+      for (const name of labelsHere) lines.push(`${name}:`);
+    }
 
     if (ins.op === "addi") {
       if (ins.rs1 === 0) {
@@ -72,38 +92,47 @@ export function cLikeExplain(program: Program): string {
     }
 
     if (ins.op === "sw") {
-        const baseConst = regConst.get(ins.rs1);
-        const valConst = regConst.get(ins.rs2);
-      
-        // Pattern: *numPtr = value
-        const ptrVarAddr = regPtrFromVar.get(ins.rs1);
-        if (ptrVarAddr !== undefined && ins.imm === 0) {
-          const ptrName = fmtAddr(inv, ptrVarAddr);
-          const rhs = valConst !== undefined ? String(valConst) : r(ins.rs2);
-          lines.push(`*${ptrName} = ${rhs};`);
-          regPtrFromVar.delete(ins.rs2);
-          continue;
-        }
-      
-        // Pattern: numPtr = &num
-        if (baseConst !== undefined && ins.imm === 0) {
-            const baseName = fmtAddr(inv, baseConst);
-            const rs2Const = valConst;
-            if (rs2Const !== undefined) {
-              const rhsName = fmtAddr(inv, rs2Const);
-              lines.push(`*(int32_t*)${baseName} = (int32_t)${rhsName};`);
-            } else {
-              lines.push(`*(int32_t*)${baseName} = ${r(ins.rs2)};`);
-            }
-            regPtrFromVar.delete(ins.rs2);
-            continue;
-          }
-      
-        // Fallback
-        lines.push(`*(int32_t*)(${r(ins.rs1)} + ${ins.imm}) = ${r(ins.rs2)};`);
+      const baseConst = regConst.get(ins.rs1);
+      const valConst = regConst.get(ins.rs2);
+
+      // Pattern: *numPtr = value
+      const ptrVarAddr = regPtrFromVar.get(ins.rs1);
+      if (ptrVarAddr !== undefined && ins.imm === 0) {
+        const ptrName = fmtAddr(inv, ptrVarAddr);
+        const rhs = valConst !== undefined ? String(valConst) : r(ins.rs2);
+        lines.push(`*${ptrName} = ${rhs};`);
+        regPtrFromVar.delete(ins.rs2);
         continue;
       }
-      
+
+      // Pattern: numPtr = &num
+      if (baseConst !== undefined && ins.imm === 0) {
+        const baseName = fmtAddr(inv, baseConst);
+        const rs2Const = valConst;
+        if (rs2Const !== undefined) {
+          const rhsName = fmtAddr(inv, rs2Const);
+          lines.push(`*(int32_t*)${baseName} = (int32_t)${rhsName};`);
+        } else {
+          lines.push(`*(int32_t*)${baseName} = ${r(ins.rs2)};`);
+        }
+        regPtrFromVar.delete(ins.rs2);
+        continue;
+      }
+
+      // Fallback
+      lines.push(`*(int32_t*)(${r(ins.rs1)} + ${ins.imm}) = ${r(ins.rs2)};`);
+      continue;
+    }
+
+    if (ins.op === "beq") {
+      const target = fmtLabel(labelMap, ins.targetPC);
+      if (ins.rs1 === ins.rs2) {
+        lines.push(`goto ${target};`);
+      } else {
+        lines.push(`if (${r(ins.rs1)} == ${r(ins.rs2)}) goto ${target};`);
+      }
+      continue;
+    }
 
     lines.push(`/* unsupported in C-like view */`);
   }

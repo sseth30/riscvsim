@@ -28,24 +28,33 @@ export function step(state: CPUState, program: Program): StepResult {
       effects.push({ kind: "reg", reg: i, before, after });
     }
   };
-  
 
-  if (inst.op === "addi") {
-    writeReg(inst.rd, r[inst.rs1] + inst.imm);
-    state.pc += 4;
-  }
+  switch (inst.op) {
+    case "addi":
+      writeReg(inst.rd, r[inst.rs1] + inst.imm);
+      state.pc = pc0 + 4;
+      break;
 
-  if (inst.op === "lw") {
-    const addr = r[inst.rs1] + inst.imm;
-    writeReg(inst.rd, loadWord(state.mem, addr));
-    state.pc += 4;
-  }
+    case "lw": {
+      const addr = r[inst.rs1] + inst.imm;
+      writeReg(inst.rd, loadWord(state.mem, addr));
+      state.pc = pc0 + 4;
+      break;
+    }
 
-  if (inst.op === "sw") {
-    const addr = r[inst.rs1] + inst.imm;
-    const { before, after } = storeWord(state.mem, addr, r[inst.rs2]);
-    effects.push({ kind: "mem", addr, size: 4, before, after });
-    state.pc += 4;
+    case "sw": {
+      const addr = r[inst.rs1] + inst.imm;
+      const { before, after } = storeWord(state.mem, addr, r[inst.rs2]);
+      effects.push({ kind: "mem", addr, size: 4, before, after });
+      state.pc = pc0 + 4;
+      break;
+    }
+
+    case "beq": {
+      const taken = r[inst.rs1] === r[inst.rs2];
+      state.pc = taken ? inst.targetPC : pc0 + 4;
+      break;
+    }
   }
 
   effects.push({ kind: "pc", before: pc0, after: state.pc });

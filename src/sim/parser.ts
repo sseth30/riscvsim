@@ -37,16 +37,18 @@ function parseOffsetBase(expr: string, srcLine: number) {
   return { imm: parseImm(m[1]), rs1: parseReg(m[2]) };
 }
 
-const symbols: Record<string, number> = {};
 export function parseProgram(src: string): Program {
   const sourceLines = src.split("\n");
   const instructions: Inst[] = [];
+  const symbols: Record<string, number> = {};
+  const labels: Record<string, number> = {};
+  const pending: { line: string; srcLine: number }[] = [];
 
+  let pc = 0;
   for (let i = 0; i < sourceLines.length; i++) {
     const raw = sourceLines[i];
     const rawTrim = raw.trim();
     if (rawTrim.startsWith("#sym")) {
-      // formats: #sym name=1234  OR  #sym name 1234
       const rest = rawTrim.slice(4).trim();
       const m1 = rest.match(/^([A-Za-z_]\w*)\s*=\s*(0x[0-9a-fA-F]+|\d+)$/);
       const m2 = rest.match(/^([A-Za-z_]\w*)\s+(0x[0-9a-fA-F]+|\d+)$/);
@@ -58,49 +60,86 @@ export function parseProgram(src: string): Program {
     const line = stripComment(raw);
     if (!line) continue;
 
+    let rest = line.trim();
+    while (true) {
+      const m = rest.match(/^([A-Za-z_]\w*):\s*(.*)$/);
+      if (!m) break;
+      const [, label, after] = m;
+      if (labels[label] !== undefined) throw new Error(`Duplicate label "${label}" on line ${i + 1}`);
+      labels[label] = pc;
+      rest = after;
+    }
+
+    if (!rest.trim()) continue;
+    pending.push({ line: rest.trim(), srcLine: i });
+    pc += 4;
+  }
+
+  const parseTargetPC = (tok: string, srcLine: number) => {
+    if (labels[tok] !== undefined) return labels[tok];
+    if (symbols[tok] !== undefined) return symbols[tok];
+    if (/^[A-Za-z_]\w*$/.test(tok)) throw new Error(`Unknown label "${tok}" on line ${srcLine + 1}`);
+    const pcVal = parseImm(tok);
+    if (pcVal % 4 !== 0) throw new Error(`Branch target must be word-aligned on line ${srcLine + 1}`);
+    return pcVal;
+  };
+
+  for (const { line, srcLine } of pending) {
     const tokens = line.replace(/,/g, " ").replace(/\s+/g, " ").trim().split(" ");
     const op = tokens[0].toLowerCase();
 
     if (op === "addi") {
-      if (tokens.length !== 4) throw new Error(`Bad addi on line ${i + 1}`);
+      if (tokens.length !== 4) throw new Error(`Bad addi on line ${srcLine + 1}`);
       instructions.push({
         op: "addi",
         rd: parseReg(tokens[1]),
         rs1: parseReg(tokens[2]),
         imm: parseImm(tokens[3]),
-        srcLine: i,
+        srcLine,
       });
       continue;
     }
 
     if (op === "lw") {
-      if (tokens.length !== 3) throw new Error(`Bad lw on line ${i + 1}`);
-      const { imm, rs1 } = parseOffsetBase(tokens[2], i);
+      if (tokens.length !== 3) throw new Error(`Bad lw on line ${srcLine + 1}`);
+      const { imm, rs1 } = parseOffsetBase(tokens[2], srcLine);
       instructions.push({
         op: "lw",
         rd: parseReg(tokens[1]),
         rs1,
         imm,
-        srcLine: i,
+        srcLine,
       });
       continue;
     }
 
     if (op === "sw") {
-      if (tokens.length !== 3) throw new Error(`Bad sw on line ${i + 1}`);
-      const { imm, rs1 } = parseOffsetBase(tokens[2], i);
+      if (tokens.length !== 3) throw new Error(`Bad sw on line ${srcLine + 1}`);
+      const { imm, rs1 } = parseOffsetBase(tokens[2], srcLine);
       instructions.push({
         op: "sw",
         rs2: parseReg(tokens[1]),
         rs1,
         imm,
-        srcLine: i,
+        srcLine,
       });
       continue;
     }
 
-    throw new Error(`Unsupported instruction "${op}" on line ${i + 1}`);
+    if (op === "beq") {
+      if (tokens.length !== 4) throw new Error(`Bad beq on line ${srcLine + 1}`);
+      instructions.push({
+        op: "beq",
+        rs1: parseReg(tokens[1]),
+        rs2: parseReg(tokens[2]),
+        targetPC: parseTargetPC(tokens[3], srcLine),
+        srcLine,
+      });
+      continue;
+    }
+
+    throw new Error(`Unsupported instruction "${op}" on line ${srcLine + 1}`);
   }
 
-  return { instructions, sourceLines, symbols };
+  return { instructions, sourceLines, symbols, labels };
 }

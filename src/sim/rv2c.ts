@@ -4,6 +4,20 @@ function hex(n: number) {
   return "0x" + (n >>> 0).toString(16);
 }
 
+function buildLabelMap(program: Program): Map<number, string[]> {
+  const m = new Map<number, string[]>();
+  for (const [name, pc] of Object.entries(program.labels ?? {})) {
+    if (!m.has(pc)) m.set(pc, []);
+    m.get(pc)!.push(name);
+  }
+  return m;
+}
+
+function firstLabelForPc(labelMap: Map<number, string[]>, pc: number) {
+  const names = labelMap.get(pc);
+  return names?.[0];
+}
+
 function instToC(inst: Inst, asm: string): string[] {
   const c: string[] = [];
   c.push(`// ${asm.trim()}`);
@@ -31,6 +45,7 @@ function instToC(inst: Inst, asm: string): string[] {
 
 export function rvToC(program: Program, memSize = 64 * 1024): string {
   const lines: string[] = [];
+  const labelMap = buildLabelMap(program);
 
   lines.push(`#include <stdint.h>`);
   lines.push(`#include <string.h>`);
@@ -65,11 +80,27 @@ export function rvToC(program: Program, memSize = 64 * 1024): string {
     const inst = program.instructions[i];
     const pcVal = i * 4;
     const asm = program.sourceLines[inst.srcLine] ?? "";
+    const labelHere = labelMap.get(pcVal);
     lines.push(`      case ${pcVal}: {`);
-    for (const stmt of instToC(inst, asm)) {
-      lines.push(`        ${stmt}`);
+    if (labelHere?.length) {
+      lines.push(`        // label: ${labelHere.join(", ")}`);
     }
-    lines.push(`        pc = ${pcVal + 4};`);
+
+    if (inst.op === "beq") {
+      const targetLabel = firstLabelForPc(labelMap, inst.targetPC);
+      const targetComment = ` // goto ${targetLabel ?? hex(inst.targetPC)}`;
+      lines.push(`        // ${asm.trim()}`);
+      lines.push(`        if (x[${inst.rs1}] == x[${inst.rs2}]) {`);
+      lines.push(`          pc = ${inst.targetPC};${targetComment}`);
+      lines.push(`        } else {`);
+      lines.push(`          pc = ${pcVal + 4};`);
+      lines.push(`        }`);
+    } else {
+      for (const stmt of instToC(inst, asm)) {
+        lines.push(`        ${stmt}`);
+      }
+      lines.push(`        pc = ${pcVal + 4};`);
+    }
     lines.push(`        break;`);
     lines.push(`      }`);
   }

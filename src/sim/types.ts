@@ -6,13 +6,15 @@ export type Effect =
 export type Inst =
   | { op: "addi"; rd: number; rs1: number; imm: number; srcLine: number }
   | { op: "lw"; rd: number; rs1: number; imm: number; srcLine: number }
-  | { op: "sw"; rs2: number; rs1: number; imm: number; srcLine: number };
+  | { op: "sw"; rs2: number; rs1: number; imm: number; srcLine: number }
+  | { op: "beq"; rs1: number; rs2: number; targetPC: number; srcLine: number };
 
-  export type Program = {
-    instructions: Inst[];
-    sourceLines: string[];
-    symbols?: Record<string, number>;
-  };
+export type Program = {
+  instructions: Inst[];
+  sourceLines: string[];
+  symbols?: Record<string, number>;
+  labels?: Record<string, number>;
+};
 
 export type CPUState = {
   pc: number;
