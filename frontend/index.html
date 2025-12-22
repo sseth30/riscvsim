@@ -1,12 +1,33 @@
-<!doctype html>
+<!-- index.html -->
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RISC-V Simulator</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+      textarea { width: min(900px, 95vw); height: 240px; font-family: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      pre { width: min(900px, 95vw); white-space: pre-wrap; word-break: break-word; background: #f6f6f6; padding: 12px; border-radius: 6px; }
+      button { margin-right: 8px; }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <textarea id="source" placeholder="Type RV32 assembly here..."></textarea>
+    <div>
+      <button id="assemble">Assemble</button>
+      <button id="step" disabled>Step</button>
+    </div>
+
+    <h2>C-like explanation</h2>
+    <pre id="clike"></pre>
+
+    <h2>Last step effects</h2>
+    <pre id="effects"></pre>
+
+    <h2>Registers</h2>
+    <pre id="regs"></pre>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

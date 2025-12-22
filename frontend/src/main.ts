@@ -1,128 +1,144 @@
-import "./style.css";
-import { createSession, assemble, reset, step } from "./sim/api";
-import type { Effect, ApiResponse } from "./sim/types";
-import { formatEffects, changedRegsFromEffects, renderRegsTable } from "./sim/ui";
+// src/main.ts
 
-const defaultSource = `
-#sym num=1000
-#sym numPtr=1004
+let sessionId: string | undefined;
 
-addi t0, zero, 5
-addi t1, zero, 1000
-sw   t0, 0(t1)      # num = 5
+type Effect = {
+  kind: string; // "reg" | "mem" | "pc"
+  reg?: number;
+  addr?: number;
+  size?: number;
+  before?: number;
+  after?: number;
+  beforeBytes?: number[];
+  afterBytes?: number[];
+};
 
-addi t2, zero, 1000
-addi t3, zero, 1004
-sw   t2, 0(t3)      # numPtr = &num
+type ApiResponse = {
+  sessionId?: string;
+  pc?: number;
+  regs?: number[];
+  halted?: boolean;
+  effects?: Effect[];
+  clike?: string;
+  rv2c?: string;
+  error?: string | null;
+};
 
-lw   t4, 0(t3)      # t4 = numPtr
-addi t5, zero, 6
-sw   t5, 0(t4)      # *numPtr = 6
-`.trim();
+function hex32(n: number): string {
+  const u = n >>> 0;
+  return "0x" + u.toString(16).padStart(8, "0");
+}
 
-let sessionId = "";
-let regs = new Int32Array(32);
-let lastEffects: Effect[] = [];
-let halted = false;
-let clike = "";
-let rv2c = "";
-let pc = 0;
+function fmtBytes(bytes?: number[]): string {
+  if (!bytes || bytes.length === 0) return "[]";
+  return (
+    "[" +
+    bytes.map((b) => "0x" + (b & 0xff).toString(16).padStart(2, "0")).join(" ") +
+    "]"
+  );
+}
 
-document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
-  <div class="page">
-    <h2 class="title">riscvsim</h2>
+function fmtEffect(e: Effect): string {
+  if (e.kind === "pc") {
+    return `PC ${hex32(e.before ?? 0)} -> ${hex32(e.after ?? 0)}`;
+  }
+  if (e.kind === "reg") {
+    return `REG x${e.reg ?? -1} ${hex32(e.before ?? 0)} -> ${hex32(e.after ?? 0)}`;
+  }
+  if (e.kind === "mem") {
+    return `MEM [${hex32(e.addr ?? 0)}] ${fmtBytes(e.beforeBytes)} -> ${fmtBytes(
+      e.afterBytes
+    )}`;
+  }
+  return `Effect(${e.kind})`;
+}
 
-    <div class="grid">
-      <div class="panel">
-        <textarea id="src" spellcheck="false"></textarea>
+function renderRegs(regs?: number[]): string {
+  if (!regs || regs.length !== 32) return "";
+  const lines: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    lines.push(`x${i.toString().padStart(2, "0")}: ${hex32(regs[i])}`);
+  }
+  return lines.join("\n");
+}
 
-        <div class="buttons">
-          <button id="assemble">Assemble</button>
-          <button id="reset">Reset</button>
-          <button id="step">Step</button>
-        </div>
+window.addEventListener("DOMContentLoaded", () => {
+  const assembleBtn = document.getElementById("assemble") as HTMLButtonElement;
+  const stepBtn = document.getElementById("step") as HTMLButtonElement;
+  const sourceEl = document.getElementById("source") as HTMLTextAreaElement;
 
-        <h3>Step effects</h3>
-        <div id="out" class="effects"></div>
+  const clikeEl = document.getElementById("clike") as HTMLElement;
+  const effectsEl = document.getElementById("effects") as HTMLElement;
+  const regsEl = document.getElementById("regs") as HTMLElement;
 
-        <h3>RISC-V → C mapping</h3>
-        <pre id="c"></pre>
+  async function postJson(url: string, payload: unknown): Promise<ApiResponse> {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-        <h3>C-like explanation</h3>
-        <pre id="clike"></pre>
-      </div>
+    const text = await res.text();
+    let data: ApiResponse;
+    try {
+      data = JSON.parse(text) as ApiResponse;
+    } catch {
+      throw new Error(`Non-JSON response (${res.status}): ${text}`);
+    }
 
-      <div class="panel">
-        <h3>Registers</h3>
-        <div id="regs"></div>
-      </div>
-    </div>
-  </div>
-`;
-
-const srcEl = document.querySelector<HTMLTextAreaElement>("#src")!;
-const outEl = document.querySelector<HTMLDivElement>("#out")!;
-const cEl = document.querySelector<HTMLPreElement>("#c")!;
-const clikeEl = document.querySelector<HTMLPreElement>("#clike")!;
-const regsEl = document.querySelector<HTMLDivElement>("#regs")!;
-
-srcEl.value = defaultSource;
-
-function applyResponse(r: ApiResponse) {
-  if (r.error) {
-    outEl.innerHTML = `<div class="muted">${r.error}</div>`;
-    return;
+    if (!res.ok) {
+      throw new Error(data.error ?? `HTTP ${res.status}`);
+    }
+    return data;
   }
 
-  if (r.sessionId) sessionId = r.sessionId;
-  if (typeof r.pc === "number") pc = r.pc;
-  if (Array.isArray(r.regs)) regs = Int32Array.from(r.regs);
-  if (Array.isArray(r.effects)) lastEffects = r.effects;
-  if (typeof r.halted === "boolean") halted = r.halted;
+  function renderAll(data: ApiResponse) {
+    clikeEl.textContent =
+      data.clike && data.clike.trim().length > 0 ? data.clike : data.rv2c ?? "";
 
-  if (typeof r.clike === "string") clike = r.clike;
-  if (typeof r.rv2c === "string") rv2c = r.rv2c;
-}
+    const effects = data.effects ?? [];
+    effectsEl.textContent = effects.length ? effects.map(fmtEffect).join("\n") : "(no effects)";
 
-function renderAll() {
-  cEl.textContent = rv2c;
-  clikeEl.textContent = clike;
+    regsEl.textContent = renderRegs(data.regs);
 
-  outEl.innerHTML = formatEffects(lastEffects) + (halted ? `<div class="muted">HALTED</div>` : "");
-  const changed = changedRegsFromEffects(lastEffects);
-  regsEl.innerHTML = renderRegsTable(changed, regs);
-}
+    if (data.halted) {
+      stepBtn.disabled = true;
+      stepBtn.textContent = "Halted";
+    } else {
+      stepBtn.textContent = "Step";
+    }
+  }
 
-async function boot() {
-  outEl.innerHTML = `<div class="muted">Starting backend session...</div>`;
-  const r = await createSession(srcEl.value);
-  applyResponse(r);
-  renderAll();
-}
+  assembleBtn.onclick = async () => {
+    effectsEl.textContent = "";
+    clikeEl.textContent = "";
+    regsEl.textContent = "";
 
-document.querySelector<HTMLButtonElement>("#assemble")!.onclick = async () => {
-  if (!sessionId) return;
-  lastEffects = [];
-  outEl.innerHTML = `<div class="muted">Assembling...</div>`;
-  const r = await assemble(sessionId, srcEl.value);
-  applyResponse(r);
-  renderAll();
-};
+    stepBtn.disabled = true;
+    stepBtn.textContent = "Step";
 
-document.querySelector<HTMLButtonElement>("#reset")!.onclick = async () => {
-  if (!sessionId) return;
-  lastEffects = [];
-  const r = await reset(sessionId);
-  applyResponse(r);
-  renderAll();
-};
+    try {
+      const source = sourceEl.value;
+      const data = await postJson("http://localhost:8080/api/session", { source });
+      sessionId = data.sessionId;
+      renderAll(data);
+      stepBtn.disabled = false;
+    } catch (err) {
+      effectsEl.textContent = `Error: ${(err as Error).message}`;
+    }
+  };
 
-document.querySelector<HTMLButtonElement>("#step")!.onclick = async () => {
-  if (!sessionId) return;
-  if (halted) return;
-  const r = await step(sessionId);
-  applyResponse(r);
-  renderAll();
-};
+  stepBtn.onclick = async () => {
+    if (!sessionId) {
+      effectsEl.textContent = "Error: no sessionId. Click Assemble first.";
+      return;
+    }
 
-boot();
+    try {
+      const data = await postJson("http://localhost:8080/api/step", { sessionId });
+      renderAll(data);
+    } catch (err) {
+      effectsEl.textContent = `Error: ${(err as Error).message}`;
+    }
+  };
+});
