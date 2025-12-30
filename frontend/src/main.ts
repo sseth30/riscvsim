@@ -1,6 +1,11 @@
 // src/main.ts
 
 let sessionId: string | undefined;
+const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "";
+
+function api(path: string): string {
+  return `${API_BASE}${path}`;
+}
 
 type Effect = {
   kind: string; // "reg" | "mem" | "pc"
@@ -119,7 +124,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     try {
       const source = sourceEl.value;
-      const data = await postJson("http://localhost:8080/api/session", { source });
+      const data = await postJson(api("/api/session"), { source });
       sessionId = data.sessionId;
       renderAll(data);
       stepBtn.disabled = false;
@@ -135,7 +140,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const data = await postJson("http://localhost:8080/api/step", { sessionId });
+      const data = await postJson(api("/api/step"), { sessionId });
       renderAll(data);
     } catch (err) {
       effectsEl.textContent = `Error: ${(err as Error).message}`;
