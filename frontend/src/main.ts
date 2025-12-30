@@ -1,5 +1,7 @@
 // src/main.ts
 
+console.log("VITE_API_BASE =", import.meta.env.VITE_API_BASE);
+
 let sessionId: string | undefined;
 const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "";
 
