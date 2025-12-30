@@ -2,7 +2,6 @@
 
 console.log("VITE_API_BASE =", import.meta.env.VITE_API_BASE);
 
-let sessionId: string | undefined;
 const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "";
 
 function api(path: string): string {
@@ -126,8 +125,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     try {
       const source = sourceEl.value;
-      const data = await postJson(api("/api/session"), { source });
-      sessionId = data.sessionId;
+      const data = await postJson(api("/simulate"), { code: source });
       renderAll(data);
       stepBtn.disabled = false;
     } catch (err) {
@@ -136,13 +134,9 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   stepBtn.onclick = async () => {
-    if (!sessionId) {
-      effectsEl.textContent = "Error: no sessionId. Click Assemble first.";
-      return;
-    }
-
     try {
-      const data = await postJson(api("/api/step"), { sessionId });
+      const source = sourceEl.value;
+      const data = await postJson(api("/simulate"), { code: source });
       renderAll(data);
     } catch (err) {
       effectsEl.textContent = `Error: ${(err as Error).message}`;
